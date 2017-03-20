@@ -47,10 +47,31 @@ type (
 		ResponseCode int  `json:"responseCode"`
 		Data         bool `json:"data"`
 	}
+
+	Filters struct {
+		PageFrom                       int    `json:"from,omitempty"`
+		PageSize                       int    `json:"size,omitempty"`
+		StartTimestamp                 string `json:"start_timestamp,omitempty"`
+		EndTimestamp                   string `json:"end_timestamp,omitempty"`
+		PolicyName                     string `json:"policy,omitempty"`
+		ChannelTypeCode                int    `json:"channel,omitempty"`
+		ActionTypeCode                 int    `json:"action,omitempty"`
+		SourceEntryInfoCommonName      string `json:"source,omitempty"`
+		DestinationEntryInfoCommonName string `json:"dest,omitempty"`
+	}
 )
 
 func NewIncidentsController() *IncidentsController {
 	return &IncidentsController{}
+}
+
+func NewFilters() Filters {
+	f := Filters{}
+	f.ActionTypeCode = -1
+	f.ChannelTypeCode = -1
+	f.PageFrom = 0
+	f.PageSize = 20
+	return f
 }
 
 const (
@@ -189,16 +210,20 @@ func (ic IncidentsController) GetReport(w http.ResponseWriter, r *http.Request, 
 	//}
 	es_index := "incidents-" + p.ByName("tenant")
 	es_type := p.ByName("incident_type")
-	agg_type := p.ByName("agg_type")
+	queryValues := r.URL.Query()
+	var agg_type string
+	agg_type = queryValues.Get("agg_type")
+	if agg_type == "" {
+		agg_type = "1"
+	}
 	var agg_size int
-	if agg_top := p.ByName("agg_top"); agg_top != "" {
+	if agg_top := queryValues.Get("agg_top"); agg_top != "" {
 		if size, err := strconv.Atoi(agg_top); err != nil {
 			agg_size = 10
 		} else {
 			agg_size = size
 		}
 	}
-
 	log.WithFields(log.Fields{
 		"es_index": es_index,
 		"agg_type": agg_type,
@@ -211,7 +236,16 @@ func (ic IncidentsController) GetReport(w http.ResponseWriter, r *http.Request, 
 		fmt.Fprintf(w, ic.fail_response(response_fail, err.Error()))
 		return
 	}
-	termsAggregation := elastic.NewTermsAggregation().Field("incidentPolicies.policyName.keyword").Size(agg_size)
+
+	var agg_type_map = map[string]string{"1": "incidentPolicies.policyName.keyword", "2": "sourceEntryInfo.commonName.keyword", "3": "incidentDestinations.destinationEntryInfo.commonName.keyword", "4": "channelTypeCode"}
+	var agg_field string
+	var exists bool
+	agg_field, exists = agg_type_map[agg_type]
+	if !exists {
+		agg_field = "incidentPolicies.policyName.keyword"
+	}
+	termsAggregation := elastic.NewTermsAggregation().Field(agg_field).Size(agg_size)
+	//termsAggregation := elastic.NewTermsAggregation().Field("incidentPolicies.policyName.keyword").Size(agg_size)
 	builder := client.Search().Index(es_index).Type(es_type).Pretty(true).Aggregation("sort_incidents", termsAggregation)
 	searchResult, err := builder.Do(ctx)
 	if err != nil {
@@ -233,4 +267,76 @@ func (ic IncidentsController) GetReport(w http.ResponseWriter, r *http.Request, 
 		log.Debug("response is: " + string(response))
 		fmt.Fprintf(w, string(response))
 	}
+}
+
+func (ic IncidentsController) constructFilters(r *http.Request) Filters {
+	queryValues := r.URL.Query()
+	filters := NewFilters()
+	filters.StartTimestamp = queryValues.Get("start_timestamp")
+	filters.EndTimestamp = queryValues.Get("end_timestamp")
+	filters.PolicyName = queryValues.Get("policy")
+	filters.SourceEntryInfoCommonName = queryValues.Get("source")
+	filters.DestinationEntryInfoCommonName = queryValues.Get("dest")
+	if para_from := queryValues.Get("from"); para_from != "" {
+		if from, err := strconv.Atoi(para_from); err != nil {
+			filters.PageFrom = 20
+		} else {
+			filters.PageFrom = from
+		}
+	}
+	if para_size := queryValues.Get("size"); para_size != "" {
+		if size, err := strconv.Atoi(para_size); err != nil {
+			filters.PageSize = 20
+		} else {
+			filters.PageSize = size
+		}
+	}
+	if para_action := queryValues.Get("action"); para_action != "" {
+		if action, err := strconv.Atoi(para_action); err == nil {
+			filters.ActionTypeCode = action
+		}
+	}
+	if para_channel := queryValues.Get("channel"); para_channel != "" {
+		if channel, err := strconv.Atoi(para_channel); err == nil {
+			filters.ChannelTypeCode = channel
+		}
+	}
+	return filters
+}
+
+func (ic IncidentsController) SearchIncidents(w http.ResponseWriter, r *http.Request, p httprouter.Params) {
+	//errMsg := ic.header_auth(r.Header.Get("Authorization"))
+	//if errMsg != "" {
+	//      fmt.Fprintf(w, ic.fail_response(response_auth_fail, errMsg))
+	//      return
+	//}
+	es_index := "incidents-" + p.ByName("tenant")
+	es_type := p.ByName("incident_type")
+
+	filters := ic.constructFilters(r)
+	f_str, _ := json.Marshal(filters)
+	log.WithFields(log.Fields{
+		"es_index": es_index,
+		"es_type":  es_type,
+		"filters":  string(f_str),
+	}).Info("Execute /cloud/v1/incidents api.")
+
+	w.Header().Set("Content-Type", "application/json")
+	//client, ctx, err := ic.es_client(es_index)
+	//if err != nil {
+	//	fmt.Fprintf(w, ic.fail_response(response_fail, err.Error()))
+	//	return
+	//}
+
+	// Search with a term query
+	//termQuery := elastic.NewTermQuery("id", query_id)
+	//searchResult, err := client.Search().
+	//	Index(es_index).
+	//	Type(es_type).
+	//	Query(termQuery). // specify the query
+	//	Sort("detectTime", true).
+	//	From(0).Size(10).
+	//	Pretty(true).
+	//	Do(ctx) // execute
+
 }
