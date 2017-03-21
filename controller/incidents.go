@@ -76,7 +76,8 @@ func NewFilters() Filters {
 }
 
 const (
-	es_url             = "http://172.22.112.251:9200"
+	es_url = "http://172.22.112.251:9200"
+	//es_url             = "http://elasticsearch:9200"
 	sps_auth_url       = "https://sps-webservice:8443/sps/v1/tenant/verify"
 	response_success   = 200
 	response_fail      = 500
@@ -329,6 +330,10 @@ func (ic IncidentsController) SearchIncidents(w http.ResponseWriter, r *http.Req
 		return
 	}
 	boolQuery := elastic.NewBoolQuery().QueryName("bool_query")
+	if filters.StartTimestamp != "" && filters.EndTimestamp != "" {
+		rangeQuery := elastic.NewRangeQuery("detectTime").Gte(filters.StartTimestamp).Lte(filters.EndTimestamp)
+		boolQuery.Must(rangeQuery)
+	}
 	if filters.ActionTypeCode != -1 {
 		boolQuery.Must(elastic.NewTermQuery("actionTypeCode", filters.ActionTypeCode))
 	}
@@ -347,6 +352,9 @@ func (ic IncidentsController) SearchIncidents(w http.ResponseWriter, r *http.Req
 	if filters.User != "" {
 		boolQuery.Must(elastic.NewMatchPhraseQuery("sourceEntryInfo.commonName", filters.User))
 	}
+	src, _ := boolQuery.Source()
+	dsl, _ := json.Marshal(src)
+	log.Debug("Query DSL is: " + string(dsl))
 	fsc := elastic.NewFetchSourceContext(true).Include("id", "incidentProperties.queryUUID", "tenant")
 	searchResult, err := client.Search().FetchSourceContext(fsc).Index(es_index).Type(es_type).Query(boolQuery).Sort("detectTime", true).
 		From(filters.PageFrom).Size(filters.PageSize).Pretty(true).Do(ctx) // execute
