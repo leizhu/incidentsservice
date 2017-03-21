@@ -35,7 +35,7 @@ type (
 
 	QueryResponse struct {
 		Response
-		Data []*elastic.SearchHit `json:"data,omitempty"`
+		Data []*elastic.SearchHit `json:"data"`
 	}
 
 	AggregationResponse struct {
@@ -58,6 +58,7 @@ type (
 		ActionTypeCode                 int    `json:"action,omitempty"`
 		SourceEntryInfoCommonName      string `json:"source,omitempty"`
 		DestinationEntryInfoCommonName string `json:"dest,omitempty"`
+		User                           string `json:"user,omitempty"`
 	}
 )
 
@@ -190,7 +191,7 @@ func (ic IncidentsController) GetIncident(w http.ResponseWriter, r *http.Request
 	} else {
 		resp := QueryResponse{}
 		resp.ResponseCode = response_success
-		var f []*elastic.SearchHit
+		f := []*elastic.SearchHit{}
 		if searchResult.Hits.TotalHits > 0 {
 			resp.Data = searchResult.Hits.Hits
 		} else {
@@ -245,7 +246,6 @@ func (ic IncidentsController) GetReport(w http.ResponseWriter, r *http.Request, 
 		agg_field = "incidentPolicies.policyName.keyword"
 	}
 	termsAggregation := elastic.NewTermsAggregation().Field(agg_field).Size(agg_size)
-	//termsAggregation := elastic.NewTermsAggregation().Field("incidentPolicies.policyName.keyword").Size(agg_size)
 	builder := client.Search().Index(es_index).Type(es_type).Pretty(true).Aggregation("sort_incidents", termsAggregation)
 	searchResult, err := builder.Do(ctx)
 	if err != nil {
@@ -277,6 +277,7 @@ func (ic IncidentsController) constructFilters(r *http.Request) Filters {
 	filters.PolicyName = queryValues.Get("policy")
 	filters.SourceEntryInfoCommonName = queryValues.Get("source")
 	filters.DestinationEntryInfoCommonName = queryValues.Get("dest")
+	filters.User = queryValues.Get("user")
 	if para_from := queryValues.Get("from"); para_from != "" {
 		if from, err := strconv.Atoi(para_from); err != nil {
 			filters.PageFrom = 20
@@ -322,21 +323,47 @@ func (ic IncidentsController) SearchIncidents(w http.ResponseWriter, r *http.Req
 	}).Info("Execute /cloud/v1/incidents api.")
 
 	w.Header().Set("Content-Type", "application/json")
-	//client, ctx, err := ic.es_client(es_index)
-	//if err != nil {
-	//	fmt.Fprintf(w, ic.fail_response(response_fail, err.Error()))
-	//	return
-	//}
-
-	// Search with a term query
-	//termQuery := elastic.NewTermQuery("id", query_id)
-	//searchResult, err := client.Search().
-	//	Index(es_index).
-	//	Type(es_type).
-	//	Query(termQuery). // specify the query
-	//	Sort("detectTime", true).
-	//	From(0).Size(10).
-	//	Pretty(true).
-	//	Do(ctx) // execute
+	client, ctx, err := ic.es_client(es_index)
+	if err != nil {
+		fmt.Fprintf(w, ic.fail_response(response_fail, err.Error()))
+		return
+	}
+	boolQuery := elastic.NewBoolQuery().QueryName("bool_query")
+	if filters.ActionTypeCode != -1 {
+		boolQuery.Must(elastic.NewTermQuery("actionTypeCode", filters.ActionTypeCode))
+	}
+	if filters.ChannelTypeCode != -1 {
+		boolQuery.Must(elastic.NewTermQuery("channelTypeCode", filters.ChannelTypeCode))
+	}
+	if filters.PolicyName != "" {
+		boolQuery.Must(elastic.NewMatchQuery("incidentPolicies.policyName", filters.PolicyName).Operator("and"))
+	}
+	if filters.SourceEntryInfoCommonName != "" {
+		boolQuery.Must(elastic.NewMatchPhraseQuery("sourceEntryInfo.commonName", filters.SourceEntryInfoCommonName))
+	}
+	if filters.DestinationEntryInfoCommonName != "" {
+		boolQuery.Must(elastic.NewMatchPhraseQuery("incidentDestinations.destinationEntryInfo.commonName", filters.DestinationEntryInfoCommonName))
+	}
+	if filters.User != "" {
+		boolQuery.Must(elastic.NewMatchPhraseQuery("sourceEntryInfo.commonName", filters.User))
+	}
+	fsc := elastic.NewFetchSourceContext(true).Include("id", "incidentProperties.queryUUID", "tenant")
+	searchResult, err := client.Search().FetchSourceContext(fsc).Index(es_index).Type(es_type).Query(boolQuery).Sort("detectTime", true).
+		From(filters.PageFrom).Size(filters.PageSize).Pretty(true).Do(ctx) // execute
+	if err != nil {
+		fmt.Fprintf(w, ic.fail_response(response_fail, "Encouter error when search with filters: "+err.Error()))
+	} else {
+		resp := QueryResponse{}
+		resp.ResponseCode = response_success
+		f := []*elastic.SearchHit{}
+		if searchResult.Hits.TotalHits > 0 {
+			resp.Data = searchResult.Hits.Hits
+		} else {
+			resp.Data = f
+		}
+		response, _ := json.Marshal(resp)
+		log.Debug("response is: " + string(response))
+		fmt.Fprintf(w, string(response))
+	}
 
 }
