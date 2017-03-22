@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -104,7 +105,10 @@ const (
 )
 
 func (ic IncidentsController) sps_auth_check(token string) bool {
-	client := &http.Client{}
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
 	req, err := http.NewRequest("GET", ic.SpsAuthURL, nil)
 	if err != nil {
 		log.Error("Sending sps_auth request error: " + err.Error())
@@ -113,6 +117,10 @@ func (ic IncidentsController) sps_auth_check(token string) bool {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", token)
 	resp, err := client.Do(req)
+	if err != nil {
+		log.Error("Encouter error when sending request %s, error is %s", ic.SpsAuthURL, err.Error())
+		return false
+	}
 	defer resp.Body.Close()
 	if err != nil || resp.StatusCode != 200 {
 		log.Error("Response from sps_auth request is wrong, StatusCode %d", resp.StatusCode)
@@ -160,6 +168,7 @@ func (ic IncidentsController) fail_response(code int, errMsg string) string {
 }
 
 func (ic IncidentsController) header_auth(token string) string {
+	log.Debug("Auth token for sps auth is: " + token)
 	if token == "" {
 		return "Authorization header should be set."
 	}
@@ -199,7 +208,10 @@ func (ic IncidentsController) GetIncident(w http.ResponseWriter, r *http.Request
 	}
 
 	// Search with a term query
-	termQuery := elastic.NewTermQuery("id", query_id)
+	termQuery := elastic.NewTermQuery("incidentProperties.queryUUID", query_id)
+	src, _ := termQuery.Source()
+	dsl, _ := json.Marshal(src)
+	log.Debug("Query DSL is: " + string(dsl))
 	searchResult, err := client.Search().
 		Index(es_index).
 		Type(es_type).
