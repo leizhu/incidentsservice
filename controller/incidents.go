@@ -17,16 +17,37 @@ import (
 	"github.com/leizhu/incidentsservice/logutil"
 )
 
-func init() {
-	//log.SetFormatter(&log.JSONFormatter{})
-	log.SetFormatter(&log.TextFormatter{})
+func InitLog(loglevel string) {
+	log.SetFormatter(&log.JSONFormatter{})
+	//log.SetFormatter(&log.TextFormatter{})
 	log.SetOutput(os.Stdout)
-	log.SetLevel(log.DebugLevel)
+	switch loglevel {
+	case "INFO":
+		log.SetLevel(log.InfoLevel)
+	case "DEBUG":
+		log.SetLevel(log.DebugLevel)
+	case "ERROR":
+		log.SetLevel(log.ErrorLevel)
+	default:
+		log.SetLevel(log.InfoLevel)
+	}
 	log.AddHook(logutil.ContextHook{})
 }
 
+//func init() {
+//        //log.SetFormatter(&log.JSONFormatter{})
+//        log.SetFormatter(&log.TextFormatter{})
+//        log.SetOutput(os.Stdout)
+//        log.SetLevel(log.DebugLevel)
+//        log.AddHook(logutil.ContextHook{})
+//}
+
 type (
-	IncidentsController struct{}
+	IncidentsController struct {
+		ElasticsearchURL string
+		SpsAuthEnable    bool
+		SpsAuthURL       string
+	}
 
 	Response struct {
 		ResponseCode int    `json:"responseCode"`
@@ -62,8 +83,9 @@ type (
 	}
 )
 
-func NewIncidentsController() *IncidentsController {
-	return &IncidentsController{}
+func NewIncidentsController(es_url string, sps_auth_enable bool, sps_auth_url string) *IncidentsController {
+	sps_auth_url += "/sps/v1/tenant/verify"
+	return &IncidentsController{ElasticsearchURL: es_url, SpsAuthEnable: sps_auth_enable, SpsAuthURL: sps_auth_url}
 }
 
 func NewFilters() Filters {
@@ -76,9 +98,6 @@ func NewFilters() Filters {
 }
 
 const (
-	es_url = "http://172.22.112.251:9200"
-	//es_url             = "http://elasticsearch:9200"
-	sps_auth_url       = "https://sps-webservice:8443/sps/v1/tenant/verify"
 	response_success   = 200
 	response_fail      = 500
 	response_auth_fail = 401
@@ -86,7 +105,7 @@ const (
 
 func (ic IncidentsController) sps_auth_check(token string) bool {
 	client := &http.Client{}
-	req, err := http.NewRequest("GET", sps_auth_url, nil)
+	req, err := http.NewRequest("GET", ic.SpsAuthURL, nil)
 	if err != nil {
 		log.Error("Sending sps_auth request error: " + err.Error())
 		return false
@@ -115,12 +134,12 @@ func (ic IncidentsController) sps_auth_check(token string) bool {
 
 func (ic IncidentsController) es_client(index string) (*elastic.Client, context.Context, error) {
 	ctx := context.Background()
-	client, err := elastic.NewClient(elastic.SetURL(es_url))
+	client, err := elastic.NewClient(elastic.SetURL(ic.ElasticsearchURL))
 	if err != nil {
 		log.Error("Can not create es client: " + err.Error())
 		return nil, nil, errors.New(fmt.Sprintln("Can not create es client: ", err))
 	}
-	info, code, err := client.Ping(es_url).Do(ctx)
+	info, code, err := client.Ping(ic.ElasticsearchURL).Do(ctx)
 	if err != nil {
 		log.Error("Elasticsearch returned with code %d and version %s", code, info.Version.Number)
 		return nil, nil, errors.New(fmt.Sprintln("Elasticsearch returned with code %d and version %s", code, info.Version.Number))
@@ -157,11 +176,13 @@ func (ic IncidentsController) header_auth(token string) string {
 }
 
 func (ic IncidentsController) GetIncident(w http.ResponseWriter, r *http.Request, p httprouter.Params) {
-	//errMsg := ic.header_auth(r.Header.Get("Authorization"))
-	//if errMsg != "" {
-	//	fmt.Fprintf(w, ic.fail_response(response_auth_fail, errMsg))
-	//	return
-	//}
+	if ic.SpsAuthEnable {
+		errMsg := ic.header_auth(r.Header.Get("Authorization"))
+		if errMsg != "" {
+			fmt.Fprintf(w, ic.fail_response(response_auth_fail, errMsg))
+			return
+		}
+	}
 	es_index := "incidents-" + p.ByName("tenant")
 	es_type := p.ByName("incident_type")
 	query_id := p.ByName("query_id")
@@ -199,17 +220,19 @@ func (ic IncidentsController) GetIncident(w http.ResponseWriter, r *http.Request
 			resp.Data = f
 		}
 		response, _ := json.Marshal(resp)
-		log.Debug("response is: " + string(response))
+		log.Info("response is: " + string(response))
 		fmt.Fprintf(w, string(response))
 	}
 }
 
 func (ic IncidentsController) GetReport(w http.ResponseWriter, r *http.Request, p httprouter.Params) {
-	//errMsg := ic.header_auth(r.Header.Get("Authorization"))
-	//if errMsg != "" {
-	//      fmt.Fprintf(w, ic.fail_response(response_auth_fail, errMsg))
-	//      return
-	//}
+	if ic.SpsAuthEnable {
+		errMsg := ic.header_auth(r.Header.Get("Authorization"))
+		if errMsg != "" {
+			fmt.Fprintf(w, ic.fail_response(response_auth_fail, errMsg))
+			return
+		}
+	}
 	es_index := "incidents-" + p.ByName("tenant")
 	es_type := p.ByName("incident_type")
 	queryValues := r.URL.Query()
@@ -265,7 +288,7 @@ func (ic IncidentsController) GetReport(w http.ResponseWriter, r *http.Request, 
 			resp.ResponseCode = response_fail
 		}
 		response, _ := json.Marshal(resp)
-		log.Debug("response is: " + string(response))
+		log.Info("response is: " + string(response))
 		fmt.Fprintf(w, string(response))
 	}
 }
@@ -281,7 +304,7 @@ func (ic IncidentsController) constructFilters(r *http.Request) Filters {
 	filters.User = queryValues.Get("user")
 	if para_from := queryValues.Get("from"); para_from != "" {
 		if from, err := strconv.Atoi(para_from); err != nil {
-			filters.PageFrom = 20
+			filters.PageFrom = 0
 		} else {
 			filters.PageFrom = from
 		}
@@ -307,11 +330,13 @@ func (ic IncidentsController) constructFilters(r *http.Request) Filters {
 }
 
 func (ic IncidentsController) SearchIncidents(w http.ResponseWriter, r *http.Request, p httprouter.Params) {
-	//errMsg := ic.header_auth(r.Header.Get("Authorization"))
-	//if errMsg != "" {
-	//      fmt.Fprintf(w, ic.fail_response(response_auth_fail, errMsg))
-	//      return
-	//}
+	if ic.SpsAuthEnable {
+		errMsg := ic.header_auth(r.Header.Get("Authorization"))
+		if errMsg != "" {
+			fmt.Fprintf(w, ic.fail_response(response_auth_fail, errMsg))
+			return
+		}
+	}
 	es_index := "incidents-" + p.ByName("tenant")
 	es_type := p.ByName("incident_type")
 
@@ -370,7 +395,7 @@ func (ic IncidentsController) SearchIncidents(w http.ResponseWriter, r *http.Req
 			resp.Data = f
 		}
 		response, _ := json.Marshal(resp)
-		log.Debug("response is: " + string(response))
+		log.Info("response is: " + string(response))
 		fmt.Fprintf(w, string(response))
 	}
 
