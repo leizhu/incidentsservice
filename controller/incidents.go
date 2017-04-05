@@ -393,7 +393,7 @@ func (ic IncidentsController) SearchIncidents(w http.ResponseWriter, r *http.Req
 	dsl, _ := json.Marshal(src)
 	log.Debug("Query DSL is: " + string(dsl))
 	fsc := elastic.NewFetchSourceContext(true).Include("id", "incidentProperties.queryUUID", "tenant")
-	searchResult, err := client.Search().FetchSourceContext(fsc).Index(es_index).Type(es_type).Query(boolQuery).Sort("detectTime", true).
+	searchResult, err := client.Search().FetchSourceContext(fsc).Index(es_index).Type(es_type).Query(boolQuery).Sort("detectTime", false).
 		From(filters.PageFrom).Size(filters.PageSize).Pretty(true).Do(ctx) // execute
 	if err != nil {
 		fmt.Fprintf(w, ic.fail_response(response_fail, "Encouter error when search with filters: "+err.Error()))
