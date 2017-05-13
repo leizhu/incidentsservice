@@ -1,12 +1,12 @@
 package controller
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/julienschmidt/httprouter"
-	"golang.org/x/net/context"
 	elastic "gopkg.in/olivere/elastic.v5"
 	"io/ioutil"
 	"net/http"
@@ -142,7 +142,7 @@ func (ic IncidentsController) sps_auth_check(token string) bool {
 
 func (ic IncidentsController) es_client(index string) (*elastic.Client, context.Context, error) {
 	ctx := context.Background()
-	client, err := elastic.NewClient(elastic.SetURL(ic.ElasticsearchURL))
+	client, err := elastic.NewClient(elastic.SetURL(ic.ElasticsearchURL), elastic.SetSniff(true))
 	if err != nil {
 		log.Error("Can not create es client: " + err.Error())
 		return nil, nil, errors.New(fmt.Sprintln("Can not create es client: ", err))
