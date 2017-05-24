@@ -145,17 +145,17 @@ func (ic IncidentsController) es_client(index string) (*elastic.Client, context.
 	client, err := elastic.NewClient(elastic.SetURL(ic.ElasticsearchURL), elastic.SetSniff(true))
 	if err != nil {
 		log.Error("Can not create es client: " + err.Error())
-		return nil, nil, errors.New(fmt.Sprintln("Can not create es client: ", err))
+		return nil, context.TODO(), errors.New(fmt.Sprintln("Can not create es client: ", err))
 	}
 	info, code, err := client.Ping(ic.ElasticsearchURL).Do(ctx)
 	if err != nil {
 		log.Error("Elasticsearch returned with code %d and version %s", code, info.Version.Number)
-		return nil, nil, errors.New(fmt.Sprintln("Elasticsearch returned with code %d and version %s", code, info.Version.Number))
+		return nil, context.TODO(), errors.New(fmt.Sprintln("Elasticsearch returned with code %d and version %s", code, info.Version.Number))
 	}
 	exists, err := client.IndexExists(index).Do(ctx)
 	if err != nil || !exists {
 		log.Error("No index in ES server: " + err.Error())
-		return nil, nil, errors.New(fmt.Sprintln("No index in ES server: ", err))
+		return nil, context.TODO(), errors.New(fmt.Sprintln("No index in ES server: ", err))
 	}
 	return client, ctx, nil
 }
